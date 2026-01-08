@@ -1,0 +1,449 @@
+<!DOCTYPE html>
+<html lang="id">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Sistem Koreksi Laporan Excel</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
+    <style>
+        @import url('https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;600;700&display=swap');
+        
+        body { 
+            font-family: 'Plus Jakarta Sans', sans-serif; 
+            scroll-behavior: smooth;
+        }
+
+        .input-edit {
+            @apply border-b border-transparent hover:border-blue-400 focus:border-blue-600 focus:outline-none bg-transparent w-full transition-all py-1 px-1 font-medium;
+        }
+
+        .input-form {
+            @apply w-full bg-slate-50 border border-slate-200 text-sm rounded-xl focus:ring-2 focus:ring-blue-500 focus:bg-white block p-3 outline-none transition-all;
+        }
+
+        input::-webkit-outer-spin-button,
+        input::-webkit-inner-spin-button {
+            -webkit-appearance: none;
+            margin: 0;
+        }
+        input[type=number] {
+            -moz-appearance: textfield;
+        }
+
+        .row-corrected {
+            background-color: #fde047 !important; 
+        }
+        
+        .row-corrected:hover {
+            background-color: #facc15 !important;
+        }
+
+        .category-header-row {
+            @apply bg-slate-100 text-slate-600 font-bold text-[10px] uppercase tracking-widest;
+        }
+
+        /* --- STICKY / FREEZE LOGIC --- */
+        
+        /* Freeze Header Baris - Pastikan Background Solid */
+        thead th {
+            position: sticky;
+            top: 0;
+            z-index: 30;
+            background-color: #1e293b !important; /* slate-800 solid */
+            opacity: 1;
+        }
+
+        /* Freeze Kolom Kiri */
+        .freeze-col {
+            position: sticky;
+            left: 0;
+            z-index: 10;
+            background-color: white; /* Default background untuk baris data */
+        }
+        
+        /* Header yang juga merupakan kolom freeze harus memiliki z-index paling tinggi */
+        thead th.freeze-col {
+            z-index: 40;
+            background-color: #1e293b !important;
+        }
+
+        /* Pastikan saat row corrected, freeze col mengikuti warnanya */
+        .row-corrected .freeze-col {
+            background-color: inherit;
+        }
+
+        .shadow-right {
+            box-shadow: 4px 0 6px -4px rgba(0,0,0,0.1);
+        }
+
+        /* Container Tabel */
+        .table-container {
+            max-height: 70vh;
+            overflow: auto;
+            border-radius: 0.5rem;
+        }
+
+        @media print {
+            .no-print { display: none !important; }
+            body { background: white; padding: 0; }
+            .container-main { max-width: 100%; width: 100%; padding: 0; margin: 0; }
+            .shadow-md { shadow: none; border: 1px solid #eee; }
+            .row-corrected { background-color: transparent !important; }
+            .table-container { max-height: none; overflow: visible; }
+        }
+
+        ::-webkit-scrollbar { width: 6px; height: 6px; }
+        ::-webkit-scrollbar-track { background: #f1f1f1; }
+        ::-webkit-scrollbar-thumb { background: #cbd5e1; border-radius: 10px; }
+        ::-webkit-scrollbar-thumb:hover { background: #94a3b8; }
+    </style>
+</head>
+<body class="bg-slate-50 min-h-screen text-slate-900">
+
+    <div class="container-main max-w-6xl mx-auto p-4 md:p-8">
+        
+        <header class="mb-8 text-center no-print">
+            <h1 class="text-2xl md:text-4xl font-extrabold text-slate-800 tracking-tight">
+                Koreksi Laporan <span class="text-blue-600">Barang</span>
+            </h1>
+            <p class="text-slate-500 mt-2 text-sm md:text-base">Kelola, koreksi, dan ekspor kembali data inventaris Anda ke Excel.</p>
+            <div id="saveStatus" class="mt-4 h-6 text-xs italic transition-all duration-300"></div>
+        </header>
+
+        <!-- Form Tambah Barang Baru -->
+        <div id="addItemSection" class="bg-white rounded-2xl shadow-sm p-4 md:p-6 mb-6 border border-slate-200 no-print hidden">
+            <label class="block text-[11px] font-bold text-blue-600 uppercase tracking-widest mb-4">Tambah Barang Baru</label>
+            <form id="addItemForm" class="grid grid-cols-1 md:grid-cols-4 gap-4 items-end">
+                <div class="space-y-1">
+                    <label class="text-[10px] text-slate-400 font-bold uppercase">Nama Barang</label>
+                    <input type="text" id="newItemName" placeholder="Contoh: Laptop Pro" class="input-form" required />
+                </div>
+                <div class="space-y-1">
+                    <label class="text-[10px] text-slate-400 font-bold uppercase">Kategori</label>
+                    <select id="newItemCategory" class="input-form cursor-pointer" required>
+                        <option value="" disabled selected>Pilih Kategori...</option>
+                    </select>
+                </div>
+                <div class="grid grid-cols-2 gap-2">
+                    <div class="space-y-1">
+                        <label class="text-[10px] text-slate-400 font-bold uppercase">Harga Beli</label>
+                        <input type="number" id="newItemPrice" placeholder="0" class="input-form" required onfocus="clearValue(this)" />
+                    </div>
+                    <div class="space-y-1">
+                        <label class="text-[10px] text-slate-400 font-bold uppercase">Qty</label>
+                        <input type="number" id="newItemQty" placeholder="0" class="input-form" required onfocus="clearValue(this)" />
+                    </div>
+                </div>
+                <button type="submit" class="bg-blue-600 hover:bg-blue-700 text-white font-bold py-3 rounded-xl transition shadow-lg shadow-blue-100 flex items-center justify-center gap-2">
+                    <svg xmlns="http://www.w3.org/2000/svg" class="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 4v16m8-8H4" />
+                    </svg>
+                    Tambah
+                </button>
+            </form>
+        </div>
+
+        <div class="bg-white rounded-2xl shadow-sm p-4 md:p-6 mb-8 border border-slate-200 no-print">
+            <div class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-6">
+                <div class="space-y-2">
+                    <label class="block text-[11px] font-bold text-slate-400 uppercase tracking-widest">Unggah Excel</label>
+                    <div class="flex flex-col gap-2">
+                        <input type="file" id="uploadExcel" accept=".xlsx, .xls" 
+                            class="block w-full text-xs text-slate-500 file:mr-4 file:py-2.5 file:px-4 file:rounded-xl file:border-0 file:text-xs file:font-bold file:bg-blue-50 file:text-blue-700 hover:file:bg-blue-100 cursor-pointer border border-dashed border-slate-300 rounded-xl p-1" />
+                        <button id="resetApp" class="hidden text-red-500 hover:text-red-700 text-[10px] font-bold uppercase tracking-tighter flex items-center gap-1">
+                            <svg xmlns="http://www.w3.org/2000/svg" class="h-3 w-3" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" />
+                            </svg>
+                            Hapus Semua Data
+                        </button>
+                    </div>
+                </div>
+
+                <div class="space-y-2">
+                    <label class="block text-[11px] font-bold text-slate-400 uppercase tracking-widest">Cari Nama Barang</label>
+                    <div class="relative">
+                        <input type="text" id="searchInput" list="searchSuggestions" placeholder="Ketik nama produk..."
+                            class="input-form" />
+                        <datalist id="searchSuggestions"></datalist>
+                    </div>
+                </div>
+
+                <div class="space-y-2 sm:col-span-2 lg:col-span-1">
+                    <label class="block text-[11px] font-bold text-slate-400 uppercase tracking-widest">Filter Tampilan (Kategori)</label>
+                    <select id="categoryFilter" class="input-form cursor-pointer">
+                        <option value="all">Semua Kategori</option>
+                    </select>
+                </div>
+            </div>
+        </div>
+
+        <div class="bg-white rounded-2xl shadow-sm overflow-hidden border border-slate-200">
+            <div class="table-container w-full">
+                <table class="w-full text-left border-collapse table-auto">
+                    <thead class="text-white">
+                        <tr>
+                            <th class="px-3 py-4 text-[10px] font-bold uppercase tracking-wider text-center w-12 freeze-col" style="left: 0;">No.</th>
+                            <th class="px-4 py-4 text-[10px] font-bold uppercase tracking-wider min-w-[180px] freeze-col shadow-right" style="left: 48px;">Nama Barang</th>
+                            <th class="hidden md:table-cell px-4 py-4 text-[10px] font-bold uppercase tracking-wider">Kategori</th>
+                            <th class="px-4 py-4 text-[10px] font-bold uppercase tracking-wider text-right w-32">Harga Beli</th>
+                            <th class="px-4 py-4 text-[10px] font-bold uppercase tracking-wider text-right w-24">Qty</th>
+                            <th class="px-4 py-4 text-[10px] font-bold uppercase tracking-wider text-right min-w-[120px]">Total</th>
+                        </tr>
+                    </thead>
+                    <tbody id="tableBody" class="divide-y divide-slate-100 text-xs md:text-sm">
+                        <tr>
+                            <td colspan="6" class="px-6 py-20 text-center text-slate-400">Silakan unggah file Excel untuk melihat data.</td>
+                        </tr>
+                    </tbody>
+                    <tfoot id="tableFooter" class="bg-slate-50 font-bold text-slate-800 hidden">
+                        <tr class="border-t-2 border-slate-200">
+                            <td colspan="2" class="px-4 py-6 text-right text-[10px] uppercase text-slate-400 tracking-tighter freeze-col shadow-right" style="left: 0;">Total</td>
+                            <td class="hidden md:table-cell"></td>
+                            <td></td>
+                            <td id="totalQty" class="px-4 py-6 text-right text-blue-600 text-base">0</td>
+                            <td id="totalGrand" class="px-4 py-6 text-right text-emerald-600 text-base whitespace-nowrap">Rp 0</td>
+                        </tr>
+                    </tfoot>
+                </table>
+            </div>
+        </div>
+
+        <div id="footerActions" class="mt-8 flex flex-col sm:flex-row justify-between items-center gap-4 no-print hidden">
+            <p class="text-[10px] text-slate-400">* Baris header (hitam) dan kolom identitas telah dikunci (frozen) dengan latar belakang solid.</p>
+            <div class="flex gap-3 w-full sm:w-auto">
+                <button id="exportExcel" class="flex-1 sm:flex-none bg-emerald-600 hover:bg-emerald-700 text-white px-8 py-3 rounded-xl font-bold transition shadow-lg shadow-emerald-100 flex items-center justify-center gap-2 text-sm">
+                    <svg xmlns="http://www.w3.org/2000/svg" class="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4" />
+                    </svg>
+                    Simpan Excel
+                </button>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        let dataInventory = [];
+        const DB_KEY = 'KOREKSI_INVENTORY_STORE';
+
+        const elUpload = document.getElementById('uploadExcel');
+        const elTableBody = document.getElementById('tableBody');
+        const elTableFooter = document.getElementById('tableFooter');
+        const elFooterActions = document.getElementById('footerActions');
+        const elCategoryFilter = document.getElementById('categoryFilter');
+        const elSearchInput = document.getElementById('searchInput');
+        const elSearchSuggestions = document.getElementById('searchSuggestions');
+        const elSaveStatus = document.getElementById('saveStatus');
+        const elResetBtn = document.getElementById('resetApp');
+        const elExportBtn = document.getElementById('exportExcel');
+        const elAddItemForm = document.getElementById('addItemForm');
+        const elAddItemSection = document.getElementById('addItemSection');
+        const elNewItemCategory = document.getElementById('newItemCategory');
+
+        window.addEventListener('DOMContentLoaded', () => {
+            const saved = localStorage.getItem(DB_KEY);
+            if (saved) {
+                dataInventory = JSON.parse(saved);
+                refreshUI();
+            }
+        });
+
+        window.clearValue = function(el) {
+            el.dataset.oldValue = el.value;
+            el.value = "";
+        };
+
+        window.restoreValueIfEmpty = function(el, uid, field) {
+            if (el.value === "" && el.dataset.oldValue !== undefined) {
+                el.value = el.dataset.oldValue;
+            } else {
+                updateField(uid, field, el.value);
+            }
+        };
+
+        window.handleNavigation = function(event, uid, field) {
+            if (event.key === 'Enter') {
+                event.preventDefault(); 
+                
+                if (field === 'harga') {
+                    const qtyInput = document.querySelector(`input[data-uid="${uid}"][data-field="qty"]`);
+                    if (qtyInput) qtyInput.focus();
+                } else if (field === 'qty') {
+                    event.target.blur();
+                }
+            }
+        }
+
+        elAddItemForm.addEventListener('submit', (e) => {
+            e.preventDefault();
+            const name = document.getElementById('newItemName').value;
+            const category = elNewItemCategory.value;
+            const price = parseFloat(document.getElementById('newItemPrice').value) || 0;
+            const qty = parseFloat(document.getElementById('newItemQty').value) || 0;
+
+            const newItem = {
+                uid: Date.now(),
+                nama: name,
+                kategori: category,
+                harga: price,
+                qty: qty,
+                oriNama: name,
+                oriHarga: price, 
+                oriQty: qty,
+                isManual: true 
+            };
+
+            dataInventory.push(newItem);
+            persistData();
+            refreshUI();
+            elAddItemForm.reset();
+        });
+
+        elUpload.addEventListener('change', (e) => {
+            const file = e.target.files[0];
+            if (!file) return;
+
+            const reader = new FileReader();
+            reader.onload = (evt) => {
+                try {
+                    const workbook = XLSX.read(evt.target.result, { type: 'binary' });
+                    const sheet = workbook.Sheets[workbook.SheetNames[0]];
+                    const data = XLSX.utils.sheet_to_json(sheet);
+                    
+                    const importedData = data.map((item, idx) => {
+                        const n = String(item['Nama Barang'] || item['Nama'] || 'Produk ' + (idx+1));
+                        const h = parseFloat(item['Harga Beli'] || item['Harga'] || 0);
+                        const q = parseFloat(item['Quantity'] || item['Qty'] || 0);
+                        return {
+                            uid: Date.now() + idx,
+                            nama: n,
+                            kategori: String(item['Kategori'] || 'Umum'),
+                            harga: h,
+                            qty: q,
+                            oriNama: n,
+                            oriHarga: h,
+                            oriQty: q,
+                            isManual: false
+                        };
+                    });
+
+                    dataInventory = [...dataInventory, ...importedData];
+                    persistData();
+                    refreshUI();
+                } catch (err) {
+                    console.error("Error reading excel", err);
+                }
+            };
+            reader.readAsBinaryString(file);
+        });
+
+        function renderTable() {
+            const filterCat = elCategoryFilter.value;
+            const searchVal = elSearchInput.value.toLowerCase();
+
+            const filtered = dataInventory.filter(d => (filterCat === 'all' || d.kategori === filterCat) && d.nama.toLowerCase().includes(searchVal));
+            filtered.sort((a, b) => a.kategori.localeCompare(b.kategori) || a.nama.localeCompare(b.nama));
+
+            elTableBody.innerHTML = '';
+            let currentCategory = "";
+            let sumQ = 0, sumG = 0, counter = 1;
+
+            filtered.forEach((d) => {
+                const total = d.harga * d.qty;
+                sumQ += d.qty; sumG += total;
+
+                if (filterCat === 'all' && d.kategori !== currentCategory) {
+                    currentCategory = d.kategori;
+                    elTableBody.innerHTML += `<tr class="category-header-row"><td colspan="6" class="px-4 py-2 bg-slate-100 text-slate-500 font-bold border-y border-slate-200">Kategori: ${currentCategory}</td></tr>`;
+                }
+
+                const isModified = (d.nama !== d.oriNama) || (d.harga !== d.oriHarga) || (d.qty !== d.oriQty);
+                const row = document.createElement('tr');
+                row.className = `transition-all duration-200 border-b border-slate-50 ${isModified ? 'row-corrected' : 'hover:bg-slate-50 bg-white'}`;
+                row.innerHTML = `
+                    <td class="px-3 py-4 text-center text-slate-300 font-mono text-[10px] freeze-col" style="left: 0;">${counter++}</td>
+                    <td class="px-4 py-4 font-bold text-slate-700 freeze-col shadow-right" style="left: 48px;">
+                        <input type="text" class="input-edit !border-none p-0 focus:ring-0" value="${d.nama}" onchange="updateField(${d.uid}, 'nama', this.value)">
+                    </td>
+                    <td class="hidden md:table-cell px-4 py-4 text-slate-500">${d.kategori}</td>
+                    <td class="px-4 py-4">
+                        <input type="number" 
+                            data-uid="${d.uid}" data-field="harga"
+                            class="input-edit text-right" value="${d.harga}" 
+                            onfocus="clearValue(this)" 
+                            onblur="restoreValueIfEmpty(this, ${d.uid}, 'harga')"
+                            onkeydown="handleNavigation(event, ${d.uid}, 'harga')">
+                    </td>
+                    <td class="px-4 py-4">
+                        <input type="number" 
+                            data-uid="${d.uid}" data-field="qty"
+                            class="input-edit text-right" value="${d.qty}" 
+                            onfocus="clearValue(this)" 
+                            onblur="restoreValueIfEmpty(this, ${d.uid}, 'qty')"
+                            onkeydown="handleNavigation(event, ${d.uid}, 'qty')">
+                    </td>
+                    <td class="px-4 py-4 text-right font-extrabold text-slate-800 whitespace-nowrap">${formatRupiah(total)}</td>
+                `;
+                elTableBody.appendChild(row);
+            });
+
+            document.getElementById('totalQty').textContent = sumQ.toLocaleString('id-ID');
+            document.getElementById('totalGrand').textContent = formatRupiah(sumG);
+            elTableFooter.classList.toggle('hidden', filtered.length === 0);
+        }
+
+        function refreshUI() {
+            const categories = [...new Set(dataInventory.map(d => d.kategori))].sort();
+            elCategoryFilter.innerHTML = '<option value="all">Semua Kategori</option>' + categories.map(c => `<option value="${c}">${c}</option>`).join('');
+            elNewItemCategory.innerHTML = '<option value="" disabled selected>Pilih Kategori...</option>' + categories.map(c => `<option value="${c}">${c}</option>`).join('');
+            elSearchSuggestions.innerHTML = [...new Set(dataInventory.map(d => d.nama))].sort().map(n => `<option value="${n}">`).join('');
+            renderTable();
+            elFooterActions.classList.toggle('hidden', dataInventory.length === 0);
+            elAddItemSection.classList.toggle('hidden', dataInventory.length === 0);
+            elResetBtn.classList.toggle('hidden', dataInventory.length === 0);
+        }
+
+        window.updateField = function(uid, field, val) {
+            const idx = dataInventory.findIndex(d => d.uid === uid);
+            if (idx !== -1) {
+                const newValue = field === 'nama' ? String(val).trim() : (parseFloat(val) || 0);
+                if (dataInventory[idx][field] !== newValue) {
+                    dataInventory[idx][field] = newValue;
+                    persistData();
+                    renderTable();
+                }
+            }
+        };
+
+        function persistData() {
+            localStorage.setItem(DB_KEY, JSON.stringify(dataInventory));
+            updateStatus("Tersimpan: " + new Date().toLocaleTimeString(), "text-slate-400");
+        }
+
+        function updateStatus(txt, cls) { elSaveStatus.innerHTML = `<span class="${cls}">${txt}</span>`; }
+        function formatRupiah(val) { return new Intl.NumberFormat('id-ID', { style: 'currency', currency: 'IDR', minimumFractionDigits: 0 }).format(val); }
+
+        elCategoryFilter.addEventListener('change', renderTable);
+        elSearchInput.addEventListener('input', renderTable);
+        elResetBtn.addEventListener('click', () => { if (confirm('Hapus semua data?')) { localStorage.removeItem(DB_KEY); location.reload(); } });
+        
+        elExportBtn.addEventListener('click', () => {
+            let exportList = [...dataInventory].sort((a, b) => a.kategori.localeCompare(b.kategori) || a.nama.localeCompare(b.nama));
+            let finalData = [], currentCat = "", sQ = 0, sV = 0;
+            exportList.forEach((item, idx) => {
+                if (item.kategori !== currentCat) {
+                    if (currentCat !== "") finalData.push({ 'Nama Barang': `SUBTOTAL ${currentCat}`, 'Quantity': sQ, 'Total': sV });
+                    currentCat = item.kategori; sQ = 0; sV = 0;
+                    finalData.push({ 'Nama Barang': `--- KATEGORI: ${currentCat} ---` });
+                }
+                const total = item.harga * item.qty;
+                finalData.push({ 'No': idx+1, 'Nama Barang': item.nama, 'Kategori': item.kategori, 'Harga Beli': item.harga, 'Quantity': item.qty, 'Total': total });
+                sQ += item.qty; sV += total;
+            });
+            finalData.push({ 'Nama Barang': `SUBTOTAL ${currentCat}`, 'Quantity': sQ, 'Total': sV });
+            XLSX.writeFile(XLSX.utils.book_append_sheet(XLSX.utils.book_new(), XLSX.utils.json_to_sheet(finalData), "Laporan"), "Laporan_Koreksi.xlsx");
+        });
+    </script>
+</body>
+</html>
+
